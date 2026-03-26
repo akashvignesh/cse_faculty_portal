@@ -33,6 +33,9 @@ public class Faculty {
     @Column(name = "full_name", nullable = false, length = 255)
     private String fullName;
 
+    @Column(name = "pronouns")
+    private String pronouns;
+
     @Column(name = "standard_load", nullable = false, precision = 5, scale = 2)
     private BigDecimal standardLoad;
 

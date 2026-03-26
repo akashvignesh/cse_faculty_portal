@@ -1,6 +1,12 @@
 package edu.buffalo.cse.facultyportal.service;
 
+import edu.buffalo.cse.facultyportal.dto.FacultyContactDto;
+import edu.buffalo.cse.facultyportal.dto.FacultyDetailDto;
+import edu.buffalo.cse.facultyportal.dto.FacultyLeaveSummaryItemDto;
 import edu.buffalo.cse.facultyportal.dto.FacultyListItemDto;
+import edu.buffalo.cse.facultyportal.dto.FacultyOfficeAddressDto;
+import edu.buffalo.cse.facultyportal.dto.FacultyStudentSummaryDto;
+import edu.buffalo.cse.facultyportal.dto.FacultyTeachingHistoryItemDto;
 import edu.buffalo.cse.facultyportal.dto.PaginatedResponseDto;
 import edu.buffalo.cse.facultyportal.dto.ProfilePhotoUpdateResponseDto;
 import edu.buffalo.cse.facultyportal.entity.Document;
@@ -8,6 +14,7 @@ import edu.buffalo.cse.facultyportal.entity.Faculty;
 import edu.buffalo.cse.facultyportal.exception.InvalidFileException;
 import edu.buffalo.cse.facultyportal.exception.ResourceNotFoundException;
 import edu.buffalo.cse.facultyportal.mapper.FacultyMapper;
+import edu.buffalo.cse.facultyportal.repository.FacultyDetailRepository;
 import edu.buffalo.cse.facultyportal.repository.DocumentRepository;
 import edu.buffalo.cse.facultyportal.repository.FacultyRepository;
 import edu.buffalo.cse.facultyportal.repository.FacultySpecifications;
@@ -31,10 +38,12 @@ import java.util.Set;
 public class FacultyServiceImpl implements FacultyService {
 
     private static final long MAX_FILE_SIZE = 10_485_760L; // 10 MB
+    private static final String FACULTY_PHOTO_URL_TEMPLATE = "/api/v1/faculty/%s/profile-photo";
     private static final Set<String> ALLOWED_IMAGE_TYPES = Set.of(
             "image/jpeg", "image/png", "image/webp");
 
     private final FacultyRepository facultyRepository;
+    private final FacultyDetailRepository facultyDetailRepository;
     private final DocumentRepository documentRepository;
     private final FacultyMapper facultyMapper;
 
@@ -63,6 +72,51 @@ public class FacultyServiceImpl implements FacultyService {
                 .totalPages(facultyPage.getTotalPages())
                 .hasNext(facultyPage.hasNext())
                 .hasPrevious(facultyPage.hasPrevious())
+                .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public FacultyDetailDto getFacultyDetails(String personNumber) {
+        Faculty faculty = findFacultyOrThrow(personNumber);
+
+        FacultyDetailRepository.CurrentAppointmentProjection appointment =
+                facultyDetailRepository.findCurrentAppointment(personNumber).orElse(null);
+        String email = facultyDetailRepository.findPrimaryWorkEmail(personNumber)
+                .map(FacultyDetailRepository.PrimaryEmailProjection::getEmailAddress)
+                .orElse(null);
+        String phone = facultyDetailRepository.findPrimaryOfficePhone(personNumber)
+                .map(FacultyDetailRepository.PrimaryPhoneProjection::getPhoneNumber)
+                .orElse(null);
+        FacultyOfficeAddressDto officeAddress = facultyDetailRepository.findOfficeAddress(personNumber)
+                .map(this::toOfficeAddressDto)
+                .orElse(null);
+
+        return FacultyDetailDto.builder()
+                .personNumber(faculty.getPersonNumber())
+                .fullName(faculty.getFullName())
+                .pronouns(faculty.getPronouns())
+                .title(appointment != null ? appointment.getTitle() : null)
+                .rank(appointment != null ? appointment.getRankName() : null)
+                .profilePhotoUrl(buildPhotoUrl(faculty))
+                .contact(FacultyContactDto.builder()
+                        .email(email)
+                        .phone(phone)
+                        .officeAddress(officeAddress)
+                        .build())
+                .researchAreas(facultyDetailRepository.findResearchAreas(personNumber).stream()
+                        .map(FacultyDetailRepository.ResearchAreaProjection::getAreaName)
+                        .toList())
+                .teachingHistory(facultyDetailRepository.findTeachingHistory(personNumber).stream()
+                        .map(this::toTeachingHistoryItemDto)
+                        .toList())
+                .leaveSummary(facultyDetailRepository.findLeaveSummary(personNumber).stream()
+                        .map(this::toLeaveSummaryItemDto)
+                        .toList())
+                .studentsUnderProfessor(
+                        facultyDetailRepository.findStudentsUnderProfessor(personNumber).stream()
+                                .map(this::toStudentSummaryDto)
+                                .toList())
                 .build();
     }
 
@@ -173,5 +227,59 @@ public class FacultyServiceImpl implements FacultyService {
         } catch (IOException e) {
             throw new RuntimeException("Failed to read uploaded file", e);
         }
+    }
+
+    private String buildPhotoUrl(Faculty faculty) {
+        if (faculty.getProfilePhotoDocument() == null) {
+            return null;
+        }
+        return String.format(FACULTY_PHOTO_URL_TEMPLATE, faculty.getPersonNumber());
+    }
+
+    private FacultyOfficeAddressDto toOfficeAddressDto(
+            FacultyDetailRepository.OfficeAddressProjection projection) {
+        return FacultyOfficeAddressDto.builder()
+                .line1(projection.getLine1())
+                .city(projection.getCity())
+                .state(projection.getState())
+                .postalCode(projection.getPostalCode())
+                .country(projection.getCountry())
+                .build();
+    }
+
+    private FacultyTeachingHistoryItemDto toTeachingHistoryItemDto(
+            FacultyDetailRepository.TeachingHistoryProjection projection) {
+        return FacultyTeachingHistoryItemDto.builder()
+                .termCode(projection.getTermCode())
+                .courseCode(projection.getCourseCode())
+                .courseName(projection.getCourseName())
+                .sectionCode(projection.getSectionCode())
+                .role(projection.getRoleName())
+                .days(projection.getDays())
+                .timeRange(projection.getTimeRange())
+                .location(projection.getLocation())
+                .enrollment(projection.getEnrollment())
+                .build();
+    }
+
+    private FacultyLeaveSummaryItemDto toLeaveSummaryItemDto(
+            FacultyDetailRepository.LeaveSummaryProjection projection) {
+        return FacultyLeaveSummaryItemDto.builder()
+                .leaveType(projection.getLeaveType())
+                .startDate(projection.getStartDate())
+                .endDate(projection.getEndDate())
+                .location(projection.getLocation())
+                .reason(projection.getReason())
+                .backupFacultyPersonNumber(projection.getBackupFacultyPersonNumber())
+                .build();
+    }
+
+    private FacultyStudentSummaryDto toStudentSummaryDto(
+            FacultyDetailRepository.StudentProjection projection) {
+        return FacultyStudentSummaryDto.builder()
+                .studentPersonNumber(projection.getStudentPersonNumber())
+                .fullName(projection.getFullName())
+                .program(projection.getProgram())
+                .build();
     }
 }

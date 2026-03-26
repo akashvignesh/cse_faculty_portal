@@ -1,6 +1,7 @@
 package edu.buffalo.cse.facultyportal.controller;
 
 import edu.buffalo.cse.facultyportal.dto.ApiResponseDto;
+import edu.buffalo.cse.facultyportal.dto.FacultyDetailDto;
 import edu.buffalo.cse.facultyportal.dto.FacultyListItemDto;
 import edu.buffalo.cse.facultyportal.dto.PaginatedResponseDto;
 import edu.buffalo.cse.facultyportal.dto.ProfilePhotoUpdateResponseDto;
@@ -37,6 +38,18 @@ public class FacultyController {
 
         PaginatedResponseDto<FacultyListItemDto> result = facultyService.listFaculty(page, size, search);
         return ResponseEntity.ok(ApiResponseDto.success("Faculty list fetched successfully", result));
+    }
+
+    /**
+     * GET /api/v1/faculty/{personNumber}
+     */
+    @GetMapping("/{personNumber}")
+    public ResponseEntity<ApiResponseDto<FacultyDetailDto>> getFacultyDetails(
+            @PathVariable String personNumber) {
+
+        FacultyDetailDto result = facultyService.getFacultyDetails(personNumber);
+        return ResponseEntity.ok(
+                ApiResponseDto.success("Faculty details fetched successfully", result));
     }
 
     /**
