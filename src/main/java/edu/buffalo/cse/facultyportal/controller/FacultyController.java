@@ -3,8 +3,11 @@ package edu.buffalo.cse.facultyportal.controller;
 import edu.buffalo.cse.facultyportal.dto.ApiResponseDto;
 import edu.buffalo.cse.facultyportal.dto.FacultyDetailDto;
 import edu.buffalo.cse.facultyportal.dto.FacultyListItemDto;
+import edu.buffalo.cse.facultyportal.dto.FacultyTeachingPreferencesResponseDto;
 import edu.buffalo.cse.facultyportal.dto.PaginatedResponseDto;
 import edu.buffalo.cse.facultyportal.dto.ProfilePhotoUpdateResponseDto;
+import edu.buffalo.cse.facultyportal.dto.SaveTeachingPreferencesRequestDto;
+import edu.buffalo.cse.facultyportal.dto.SaveTeachingPreferencesResponseDto;
 import edu.buffalo.cse.facultyportal.entity.Document;
 import edu.buffalo.cse.facultyportal.service.FacultyService;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +18,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -50,6 +55,32 @@ public class FacultyController {
         FacultyDetailDto result = facultyService.getFacultyDetails(personNumber);
         return ResponseEntity.ok(
                 ApiResponseDto.success("Faculty details fetched successfully", result));
+    }
+
+    /**
+     * GET /api/v1/faculty/{facultyId}/teaching-preferences
+     */
+    @GetMapping("/{facultyId}/teaching-preferences")
+    public ResponseEntity<ApiResponseDto<FacultyTeachingPreferencesResponseDto>> getTeachingPreferences(
+            @PathVariable String facultyId) {
+
+        FacultyTeachingPreferencesResponseDto result = facultyService.getTeachingPreferences(facultyId);
+        return ResponseEntity.ok(
+                ApiResponseDto.success("Teaching preferences fetched successfully", result));
+    }
+
+    /**
+     * POST /api/v1/faculty/{facultyId}/teaching-preferences
+     */
+    @PostMapping("/{facultyId}/teaching-preferences")
+    public ResponseEntity<ApiResponseDto<SaveTeachingPreferencesResponseDto>> saveTeachingPreferences(
+            @PathVariable String facultyId,
+            @RequestBody SaveTeachingPreferencesRequestDto request) {
+
+        SaveTeachingPreferencesResponseDto result =
+                facultyService.saveTeachingPreferences(facultyId, request);
+        return ResponseEntity.ok(
+                ApiResponseDto.success("Teaching preferences saved successfully", result));
     }
 
     /**

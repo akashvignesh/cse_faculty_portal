@@ -13,10 +13,9 @@ import lombok.Setter;
 @AllArgsConstructor
 @Builder
 @JsonInclude(JsonInclude.Include.ALWAYS)
-public class FacultyListItemDto {
+public class FacultyTeachingPreferenceItemDto {
 
-    private String personNumber;
-    private String fullName;
-    private String title;
-    private String officeAddress;
+    private String courseId;
+    private String courseName;
+    private String coursePref;
 }

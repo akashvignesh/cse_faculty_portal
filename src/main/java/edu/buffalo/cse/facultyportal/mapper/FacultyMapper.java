@@ -7,18 +7,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class FacultyMapper {
 
-    private static final String PROFILE_PHOTO_ENDPOINT_TEMPLATE = "/api/v1/faculty/%s/profile-photo";
-
-    public FacultyListItemDto toListItemDto(Faculty faculty) {
-        boolean hasPhoto = faculty.getProfilePhotoDocument() != null;
-
+    public FacultyListItemDto toListItemDto(Faculty faculty, String title, String officeAddress) {
         return FacultyListItemDto.builder()
                 .personNumber(faculty.getPersonNumber())
                 .fullName(faculty.getFullName())
-                .hasProfilePhoto(hasPhoto)
-                .profilePhotoEndpoint(hasPhoto
-                        ? String.format(PROFILE_PHOTO_ENDPOINT_TEMPLATE, faculty.getPersonNumber())
-                        : null)
+                .title(title)
+                .officeAddress(officeAddress)
                 .build();
     }
 }

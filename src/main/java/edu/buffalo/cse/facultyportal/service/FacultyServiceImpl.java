@@ -6,18 +6,26 @@ import edu.buffalo.cse.facultyportal.dto.FacultyLeaveSummaryItemDto;
 import edu.buffalo.cse.facultyportal.dto.FacultyListItemDto;
 import edu.buffalo.cse.facultyportal.dto.FacultyOfficeAddressDto;
 import edu.buffalo.cse.facultyportal.dto.FacultyStudentSummaryDto;
+import edu.buffalo.cse.facultyportal.dto.FacultyTeachingPreferenceItemDto;
+import edu.buffalo.cse.facultyportal.dto.FacultyTeachingPreferencesResponseDto;
 import edu.buffalo.cse.facultyportal.dto.FacultyTeachingHistoryItemDto;
 import edu.buffalo.cse.facultyportal.dto.PaginatedResponseDto;
 import edu.buffalo.cse.facultyportal.dto.ProfilePhotoUpdateResponseDto;
+import edu.buffalo.cse.facultyportal.dto.SaveTeachingPreferenceRequestItemDto;
+import edu.buffalo.cse.facultyportal.dto.SaveTeachingPreferencesRequestDto;
+import edu.buffalo.cse.facultyportal.dto.SaveTeachingPreferencesResponseDto;
 import edu.buffalo.cse.facultyportal.entity.Document;
 import edu.buffalo.cse.facultyportal.entity.Faculty;
+import edu.buffalo.cse.facultyportal.exception.ConflictException;
 import edu.buffalo.cse.facultyportal.exception.InvalidFileException;
 import edu.buffalo.cse.facultyportal.exception.ResourceNotFoundException;
 import edu.buffalo.cse.facultyportal.mapper.FacultyMapper;
 import edu.buffalo.cse.facultyportal.repository.FacultyDetailRepository;
+import edu.buffalo.cse.facultyportal.repository.FacultyTeachingPreferenceRepository;
 import edu.buffalo.cse.facultyportal.repository.DocumentRepository;
 import edu.buffalo.cse.facultyportal.repository.FacultyRepository;
 import edu.buffalo.cse.facultyportal.repository.FacultySpecifications;
+import lombok.extern.slf4j.Slf4j;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -29,21 +37,41 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class FacultyServiceImpl implements FacultyService {
 
     private static final long MAX_FILE_SIZE = 10_485_760L; // 10 MB
     private static final String FACULTY_PHOTO_URL_TEMPLATE = "/api/v1/faculty/%s/profile-photo";
+    private static final Pattern FACULTY_ID_PATTERN = Pattern.compile("^[0-9]{8}$");
     private static final Set<String> ALLOWED_IMAGE_TYPES = Set.of(
             "image/jpeg", "image/png", "image/webp");
+    private static final Map<Integer, String> PREF_VALUE_TO_LABEL = Map.of(
+            1, "preference1",
+            2, "preference2",
+            3, "preference3",
+            0, "qualified",
+            -1, "not qualified");
+    private static final Map<String, Integer> PREF_LABEL_TO_VALUE = Map.of(
+            "preference1", 1,
+            "preference2", 2,
+            "preference3", 3,
+            "qualified", 0,
+            "not qualified", -1);
 
     private final FacultyRepository facultyRepository;
     private final FacultyDetailRepository facultyDetailRepository;
+    private final FacultyTeachingPreferenceRepository facultyTeachingPreferenceRepository;
     private final DocumentRepository documentRepository;
     private final FacultyMapper facultyMapper;
 
@@ -61,7 +89,19 @@ public class FacultyServiceImpl implements FacultyService {
         Page<Faculty> facultyPage = facultyRepository.findAll(spec, pageable);
 
         List<FacultyListItemDto> content = facultyPage.getContent().stream()
-                .map(facultyMapper::toListItemDto)
+                .map(faculty -> {
+                    FacultyDetailRepository.CurrentAppointmentProjection appointment =
+                            facultyDetailRepository.findCurrentAppointment(faculty.getPersonNumber())
+                                    .orElse(null);
+                    String officeAddress = facultyDetailRepository.findOfficeAddress(faculty.getPersonNumber())
+                            .map(this::formatOfficeAddress)
+                            .orElse(null);
+
+                    return facultyMapper.toListItemDto(
+                            faculty,
+                            appointment != null ? appointment.getTitle() : null,
+                            officeAddress);
+                })
                 .toList();
 
         return PaginatedResponseDto.<FacultyListItemDto>builder()
@@ -117,6 +157,79 @@ public class FacultyServiceImpl implements FacultyService {
                         facultyDetailRepository.findStudentsUnderProfessor(personNumber).stream()
                                 .map(this::toStudentSummaryDto)
                                 .toList())
+                .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public FacultyTeachingPreferencesResponseDto getTeachingPreferences(String facultyId) {
+        validateFacultyId(facultyId);
+
+        List<FacultyTeachingPreferenceItemDto> teachingPreferences =
+                facultyTeachingPreferenceRepository.findTeachingPreferences(facultyId).stream()
+                        .map(row -> FacultyTeachingPreferenceItemDto.builder()
+                                .courseId(row.getCourseId())
+                                .courseName(buildTeachingPreferenceCourseName(
+                                        facultyId,
+                                        row.getCourseId(),
+                                        row.getPrimaryCatalogNumber(),
+                                        row.getCourseTitleLong()))
+                                .coursePref(toCanonicalPrefLabel(row.getPref()))
+                                .build())
+                        .toList();
+
+        return FacultyTeachingPreferencesResponseDto.builder()
+                .facultyId(facultyId)
+                .teachingPreferences(teachingPreferences)
+                .build();
+    }
+
+    @Override
+    @Transactional
+    public SaveTeachingPreferencesResponseDto saveTeachingPreferences(
+            String facultyId,
+            SaveTeachingPreferencesRequestDto request) {
+        validateFacultyId(facultyId);
+        validateSaveTeachingPreferencesRequest(facultyId, request);
+
+        List<FacultyTeachingPreferenceItemDto> savedPreferences = new ArrayList<>();
+        for (SaveTeachingPreferenceRequestItemDto item : request.getPreferences()) {
+            String courseName = normalizeCourseName(item.getCourseName());
+            String coursePref = normalizeCoursePref(item.getCoursePref());
+            FacultyTeachingPreferenceRepository.CourseCatalogProjection catalogCourse =
+                    resolveCatalogCourse(courseName);
+
+            String courseId = catalogCourse.getCourseId();
+            int prefValue = toPrefValue(coursePref);
+
+            if (facultyTeachingPreferenceRepository.countTeachingPreference(facultyId, courseId) > 0) {
+                facultyTeachingPreferenceRepository.updateTeachingPreference(
+                        facultyId,
+                        courseId,
+                        prefValue,
+                        facultyId);
+            } else {
+                facultyTeachingPreferenceRepository.insertTeachingPreference(
+                        facultyId,
+                        courseId,
+                        prefValue,
+                        facultyId);
+            }
+
+            savedPreferences.add(FacultyTeachingPreferenceItemDto.builder()
+                    .courseId(courseId)
+                    .courseName(buildCatalogCourseName(
+                            catalogCourse.getPrimaryCatalogNumber(),
+                            catalogCourse.getCourseTitleLong()))
+                    .coursePref(coursePref)
+                    .build());
+        }
+
+        return SaveTeachingPreferencesResponseDto.builder()
+                .facultyId(facultyId)
+                .totalRequested(request.getPreferences().size())
+                .totalSaved(savedPreferences.size())
+                .savedPreferences(savedPreferences)
                 .build();
     }
 
@@ -183,6 +296,44 @@ public class FacultyServiceImpl implements FacultyService {
                 .toList();
     }
 
+    private void validateFacultyId(String facultyId) {
+        if (facultyId == null || !FACULTY_ID_PATTERN.matcher(facultyId).matches()) {
+            throw new IllegalArgumentException("facultyId must be exactly 8 digits");
+        }
+    }
+
+    private void validateSaveTeachingPreferencesRequest(
+            String facultyId,
+            SaveTeachingPreferencesRequestDto request) {
+        if (request == null) {
+            throw new IllegalArgumentException("Request body is required");
+        }
+        validateFacultyId(request.getFacultyId());
+        if (!facultyId.equals(request.getFacultyId())) {
+            throw new IllegalArgumentException("Path facultyId and body facultyId must match");
+        }
+        if (request.getPreferences() == null || request.getPreferences().isEmpty()) {
+            throw new IllegalArgumentException("preferences list must not be null or empty");
+        }
+
+        Set<String> normalizedCourseNames = new LinkedHashSet<>();
+        for (SaveTeachingPreferenceRequestItemDto item : request.getPreferences()) {
+            if (item == null) {
+                throw new IllegalArgumentException("preferences items must not be null");
+            }
+
+            String courseName = normalizeCourseName(item.getCourseName());
+            String coursePref = normalizeCoursePref(item.getCoursePref());
+
+            if (!normalizedCourseNames.add(courseName.toLowerCase(Locale.ROOT))) {
+                throw new IllegalArgumentException(
+                        "Duplicate courseName in request: " + courseName);
+            }
+
+            toPrefValue(coursePref);
+        }
+    }
+
     private void validateFile(MultipartFile file, Set<String> allowedTypes, String label) {
         if (file.getSize() > MAX_FILE_SIZE) {
             throw new InvalidFileException(
@@ -236,6 +387,104 @@ public class FacultyServiceImpl implements FacultyService {
         return String.format(FACULTY_PHOTO_URL_TEMPLATE, faculty.getPersonNumber());
     }
 
+    private FacultyTeachingPreferenceRepository.CourseCatalogProjection resolveCatalogCourse(
+            String courseName) {
+        CourseNameParts courseNameParts = parseCourseName(courseName);
+        List<FacultyTeachingPreferenceRepository.CourseCatalogProjection> matches =
+                facultyTeachingPreferenceRepository.findCoursesByCourseName(
+                        courseNameParts.primaryCatalogNumber(),
+                        courseNameParts.courseTitleLong());
+
+        if (matches.isEmpty()) {
+            throw new ResourceNotFoundException("Course not found in catalog: " + courseName);
+        }
+        if (matches.size() > 1) {
+            throw new ConflictException(
+                    "Multiple course catalog matches found for course name: " + courseName);
+        }
+        return matches.getFirst();
+    }
+
+    private String buildTeachingPreferenceCourseName(
+            String facultyId,
+            String courseId,
+            String primaryCatalogNumber,
+            String courseTitleLong) {
+        if (isBlank(primaryCatalogNumber) || isBlank(courseTitleLong)) {
+            log.warn(
+                    "Course catalog row missing for courseId={} while loading teaching preferences for facultyId={}",
+                    courseId,
+                    facultyId);
+            return courseId + "-UNKNOWN COURSE";
+        }
+        return buildCatalogCourseName(primaryCatalogNumber, courseTitleLong);
+    }
+
+    private String buildCatalogCourseName(String primaryCatalogNumber, String courseTitleLong) {
+        return primaryCatalogNumber.trim() + "-" + courseTitleLong.trim();
+    }
+
+    private String normalizeCourseName(String courseName) {
+        if (courseName == null || courseName.isBlank()) {
+            throw new IllegalArgumentException("courseName is required");
+        }
+        return courseName.trim();
+    }
+
+    private CourseNameParts parseCourseName(String courseName) {
+        int separatorIndex = courseName.indexOf('-');
+        if (separatorIndex <= 0 || separatorIndex == courseName.length() - 1) {
+            throw new IllegalArgumentException(
+                    "courseName must be in the format <catalogNumber>-<courseTitle>");
+        }
+
+        String primaryCatalogNumber = courseName.substring(0, separatorIndex).trim();
+        String courseTitleLong = courseName.substring(separatorIndex + 1).trim();
+        if (primaryCatalogNumber.isEmpty() || courseTitleLong.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "courseName must be in the format <catalogNumber>-<courseTitle>");
+        }
+
+        return new CourseNameParts(primaryCatalogNumber, courseTitleLong);
+    }
+
+    private String normalizeCoursePref(String coursePref) {
+        if (coursePref == null || coursePref.isBlank()) {
+            throw new IllegalArgumentException("coursePref is required");
+        }
+
+        String normalized = coursePref.trim()
+                .replaceAll("\\s+", " ")
+                .toLowerCase(Locale.ROOT);
+        if (!PREF_LABEL_TO_VALUE.containsKey(normalized)) {
+            throw new IllegalArgumentException("Invalid coursePref: " + coursePref);
+        }
+        return normalized;
+    }
+
+    private int toPrefValue(String coursePref) {
+        Integer prefValue = PREF_LABEL_TO_VALUE.get(coursePref);
+        if (prefValue == null) {
+            throw new IllegalArgumentException("Invalid coursePref: " + coursePref);
+        }
+        return prefValue;
+    }
+
+    private String toCanonicalPrefLabel(Integer prefValue) {
+        String coursePref = prefValue != null ? PREF_VALUE_TO_LABEL.get(prefValue) : null;
+        if (coursePref == null) {
+            throw new IllegalStateException("Unsupported teaching preference value: " + prefValue);
+        }
+        return coursePref;
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private record CourseNameParts(String primaryCatalogNumber, String courseTitleLong) {
+    }
+
     private FacultyOfficeAddressDto toOfficeAddressDto(
             FacultyDetailRepository.OfficeAddressProjection projection) {
         return FacultyOfficeAddressDto.builder()
@@ -245,6 +494,40 @@ public class FacultyServiceImpl implements FacultyService {
                 .postalCode(projection.getPostalCode())
                 .country(projection.getCountry())
                 .build();
+    }
+
+    private String formatOfficeAddress(FacultyDetailRepository.OfficeAddressProjection projection) {
+        List<String> parts = new ArrayList<>();
+        addIfPresent(parts, projection.getLine1());
+        addIfPresent(parts, projection.getCity());
+
+        String statePostal = joinWithSpace(projection.getState(), projection.getPostalCode());
+        addIfPresent(parts, statePostal);
+        addIfPresent(parts, projection.getCountry());
+
+        return parts.isEmpty() ? null : String.join(", ", parts);
+    }
+
+    private void addIfPresent(List<String> parts, String value) {
+        if (value != null && !value.isBlank()) {
+            parts.add(value.trim());
+        }
+    }
+
+    private String joinWithSpace(String left, String right) {
+        boolean hasLeft = left != null && !left.isBlank();
+        boolean hasRight = right != null && !right.isBlank();
+
+        if (hasLeft && hasRight) {
+            return left.trim() + " " + right.trim();
+        }
+        if (hasLeft) {
+            return left.trim();
+        }
+        if (hasRight) {
+            return right.trim();
+        }
+        return null;
     }
 
     private FacultyTeachingHistoryItemDto toTeachingHistoryItemDto(
