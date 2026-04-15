@@ -12,6 +12,7 @@ import edu.buffalo.cse.facultyportal.dto.FacultyTeachingHistoryItemDto;
 import edu.buffalo.cse.facultyportal.dto.PaginatedResponseDto;
 import edu.buffalo.cse.facultyportal.dto.ProfilePhotoUpdateResponseDto;
 import edu.buffalo.cse.facultyportal.dto.SaveTeachingPreferenceRequestItemDto;
+import edu.buffalo.cse.facultyportal.dto.SaveTeachingPreferenceResultItemDto;
 import edu.buffalo.cse.facultyportal.dto.SaveTeachingPreferencesRequestDto;
 import edu.buffalo.cse.facultyportal.dto.SaveTeachingPreferencesResponseDto;
 import edu.buffalo.cse.facultyportal.entity.Document;
@@ -54,6 +55,9 @@ public class FacultyServiceImpl implements FacultyService {
     private static final long MAX_FILE_SIZE = 10_485_760L; // 10 MB
     private static final String FACULTY_PHOTO_URL_TEMPLATE = "/api/v1/faculty/%s/profile-photo";
     private static final Pattern FACULTY_ID_PATTERN = Pattern.compile("^[0-9]{8}$");
+    private static final String ACTION_SAVED = "SAVED";
+    private static final String ACTION_UPDATED = "UPDATED";
+    private static final String ACTION_DELETED = "DELETED";
     private static final Set<String> ALLOWED_IMAGE_TYPES = Set.of(
             "image/jpeg", "image/png", "image/webp");
     private static final Map<Integer, String> PREF_VALUE_TO_LABEL = Map.of(
@@ -192,44 +196,54 @@ public class FacultyServiceImpl implements FacultyService {
         validateFacultyId(facultyId);
         validateSaveTeachingPreferencesRequest(facultyId, request);
 
-        List<FacultyTeachingPreferenceItemDto> savedPreferences = new ArrayList<>();
+        List<SaveTeachingPreferenceResultItemDto> processedPreferences = new ArrayList<>();
         for (SaveTeachingPreferenceRequestItemDto item : request.getPreferences()) {
             String courseName = normalizeCourseName(item.getCourseName());
-            String coursePref = normalizeCoursePref(item.getCoursePref());
+            String coursePref = normalizeOptionalCoursePref(item.getCoursePref());
             FacultyTeachingPreferenceRepository.CourseCatalogProjection catalogCourse =
                     resolveCatalogCourse(courseName);
 
             String courseId = catalogCourse.getCourseId();
-            int prefValue = toPrefValue(coursePref);
+            String action;
 
-            if (facultyTeachingPreferenceRepository.countTeachingPreference(facultyId, courseId) > 0) {
-                facultyTeachingPreferenceRepository.updateTeachingPreference(
-                        facultyId,
-                        courseId,
-                        prefValue,
-                        facultyId);
+            if (coursePref == null) {
+                facultyTeachingPreferenceRepository.deleteTeachingPreference(facultyId, courseId);
+                action = ACTION_DELETED;
             } else {
-                facultyTeachingPreferenceRepository.insertTeachingPreference(
-                        facultyId,
-                        courseId,
-                        prefValue,
-                        facultyId);
+                int prefValue = toPrefValue(coursePref);
+
+                if (facultyTeachingPreferenceRepository.countTeachingPreference(facultyId, courseId) > 0) {
+                    facultyTeachingPreferenceRepository.updateTeachingPreference(
+                            facultyId,
+                            courseId,
+                            prefValue,
+                            facultyId);
+                    action = ACTION_UPDATED;
+                } else {
+                    facultyTeachingPreferenceRepository.insertTeachingPreference(
+                            facultyId,
+                            courseId,
+                            prefValue,
+                            facultyId);
+                    action = ACTION_SAVED;
+                }
             }
 
-            savedPreferences.add(FacultyTeachingPreferenceItemDto.builder()
+            processedPreferences.add(SaveTeachingPreferenceResultItemDto.builder()
                     .courseId(courseId)
                     .courseName(buildCatalogCourseName(
                             catalogCourse.getPrimaryCatalogNumber(),
                             catalogCourse.getCourseTitleLong()))
                     .coursePref(coursePref)
+                    .action(action)
                     .build());
         }
 
         return SaveTeachingPreferencesResponseDto.builder()
                 .facultyId(facultyId)
                 .totalRequested(request.getPreferences().size())
-                .totalSaved(savedPreferences.size())
-                .savedPreferences(savedPreferences)
+                .totalProcessed(processedPreferences.size())
+                .processedPreferences(processedPreferences)
                 .build();
     }
 
@@ -323,14 +337,12 @@ public class FacultyServiceImpl implements FacultyService {
             }
 
             String courseName = normalizeCourseName(item.getCourseName());
-            String coursePref = normalizeCoursePref(item.getCoursePref());
+            normalizeOptionalCoursePref(item.getCoursePref());
 
             if (!normalizedCourseNames.add(courseName.toLowerCase(Locale.ROOT))) {
                 throw new IllegalArgumentException(
                         "Duplicate courseName in request: " + courseName);
             }
-
-            toPrefValue(coursePref);
         }
     }
 
@@ -448,9 +460,9 @@ public class FacultyServiceImpl implements FacultyService {
         return new CourseNameParts(primaryCatalogNumber, courseTitleLong);
     }
 
-    private String normalizeCoursePref(String coursePref) {
+    private String normalizeOptionalCoursePref(String coursePref) {
         if (coursePref == null || coursePref.isBlank()) {
-            throw new IllegalArgumentException("coursePref is required");
+            return null;
         }
 
         String normalized = coursePref.trim()

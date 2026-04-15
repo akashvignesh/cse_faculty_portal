@@ -16,7 +16,7 @@ public interface FacultyDetailRepository
     @Query(value = """
             SELECT a.title AS title,
                    a.rank_name AS rankName
-            FROM appointments a
+            FROM cfp_appointments a
             WHERE a.faculty_person_number = :personNumber
             ORDER BY CASE WHEN a.end_date IS NULL THEN 0 ELSE 1 END ASC,
                      a.start_date DESC,
@@ -28,7 +28,7 @@ public interface FacultyDetailRepository
 
     @Query(value = """
             SELECT fe.email_address AS emailAddress
-            FROM faculty_emails fe
+            FROM cfp_faculty_emails fe
             WHERE fe.faculty_person_number = :personNumber
               AND fe.email_type = 'work'
               AND fe.is_primary = 1
@@ -40,7 +40,7 @@ public interface FacultyDetailRepository
 
     @Query(value = """
             SELECT fp.phone_number AS phoneNumber
-            FROM faculty_phone_numbers fp
+            FROM cfp_faculty_phone_numbers fp
             WHERE fp.faculty_person_number = :personNumber
               AND fp.phone_type = 'office'
               AND fp.is_primary = 1
@@ -56,7 +56,7 @@ public interface FacultyDetailRepository
                    fa.state_province AS state,
                    fa.postal_code AS postalCode,
                    fa.country AS country
-            FROM faculty_addresses fa
+            FROM cfp_faculty_addresses fa
             WHERE fa.faculty_person_number = :personNumber
               AND fa.address_type = 'office'
             ORDER BY fa.faculty_address_id ASC
@@ -67,7 +67,7 @@ public interface FacultyDetailRepository
 
     @Query(value = """
             SELECT ra.area_name AS areaName
-            FROM research_areas ra
+            FROM cfp_research_areas ra
             WHERE ra.faculty_person_number = :personNumber
             ORDER BY ra.research_area_id ASC
             """, nativeQuery = true)
@@ -83,10 +83,10 @@ public interface FacultyDetailRepository
                    co.time_range AS timeRange,
                    co.location AS location,
                    co.enrollment AS enrollment
-            FROM teaching_assignments ta
-            JOIN course_offerings co
+                                                FROM cfp_teaching_assignments ta
+                                                JOIN cfp_course_offerings co
               ON co.offering_id = ta.offering_id
-            JOIN courses c
+                                                JOIN cfp_courses c
               ON c.course_id = co.course_id
             WHERE ta.faculty_person_number = :personNumber
             ORDER BY co.term_code DESC,
@@ -104,7 +104,7 @@ public interface FacultyDetailRepository
                    fl.location AS location,
                    fl.reason AS reason,
                    fl.backup_faculty_person_number AS backupFacultyPersonNumber
-            FROM faculty_leave fl
+            FROM cfp_faculty_leave fl
             WHERE fl.faculty_person_number = :personNumber
             ORDER BY fl.start_date DESC,
                      fl.leave_id DESC
@@ -115,7 +115,7 @@ public interface FacultyDetailRepository
             SELECT s.person_number AS studentPersonNumber,
                    s.full_name AS fullName,
                    s.program AS program
-            FROM students s
+            FROM cfp_students s
             WHERE s.advisor_faculty_person_number = :personNumber
             ORDER BY s.full_name ASC,
                      s.person_number ASC

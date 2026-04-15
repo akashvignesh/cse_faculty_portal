@@ -7,18 +7,16 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-import java.util.List;
-
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
 @JsonInclude(JsonInclude.Include.ALWAYS)
-public class SaveTeachingPreferencesResponseDto {
+public class SaveTeachingPreferenceResultItemDto {
 
-    private String facultyId;
-    private int totalRequested;
-    private int totalProcessed;
-    private List<SaveTeachingPreferenceResultItemDto> processedPreferences;
+    private String courseId;
+    private String courseName;
+    private String coursePref;
+    private String action;
 }

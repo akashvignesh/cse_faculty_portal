@@ -16,7 +16,7 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "documents")
+@Table(name = "cfp_documents")
 @Getter
 @Setter
 @NoArgsConstructor

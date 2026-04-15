@@ -18,7 +18,7 @@ public interface FacultyTeachingPreferenceRepository
                    ftp.pref AS pref,
                    cc.primarycatalognumber AS primaryCatalogNumber,
                    cc.coursetitlelong AS courseTitleLong
-            FROM people.faculty_teaching_prefs ftp
+                                                FROM people.cfp_faculty_teaching_prefs ftp
             LEFT JOIN ps_rpt.ps_course_catalog_v cc
               ON cc.crse_id = ftp.crse_id
             WHERE ftp.userid = :facultyId
@@ -41,7 +41,7 @@ public interface FacultyTeachingPreferenceRepository
 
     @Query(value = """
             SELECT COUNT(*)
-            FROM people.faculty_teaching_prefs ftp
+                                                FROM people.cfp_faculty_teaching_prefs ftp
             WHERE ftp.userid = :facultyId
               AND ftp.crse_id = :courseId
             """, nativeQuery = true)
@@ -51,7 +51,7 @@ public interface FacultyTeachingPreferenceRepository
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = """
-            UPDATE people.faculty_teaching_prefs
+                        UPDATE people.cfp_faculty_teaching_prefs
             SET pref = :pref,
                 editor = :editor,
                 ts = CURRENT_TIMESTAMP
@@ -66,7 +66,7 @@ public interface FacultyTeachingPreferenceRepository
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = """
-            INSERT INTO people.faculty_teaching_prefs (userid, crse_id, pref, editor, ts)
+            INSERT INTO people.cfp_faculty_teaching_prefs (userid, crse_id, pref, editor, ts)
             VALUES (:facultyId, :courseId, :pref, :editor, CURRENT_TIMESTAMP)
             """, nativeQuery = true)
     int insertTeachingPreference(
@@ -74,6 +74,16 @@ public interface FacultyTeachingPreferenceRepository
             @Param("courseId") String courseId,
             @Param("pref") int pref,
             @Param("editor") String editor);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = """
+                                                DELETE FROM people.cfp_faculty_teaching_prefs
+            WHERE userid = :facultyId
+              AND crse_id = :courseId
+            """, nativeQuery = true)
+    int deleteTeachingPreference(
+            @Param("facultyId") String facultyId,
+            @Param("courseId") String courseId);
 
     interface TeachingPreferenceProjection {
         String getFacultyId();

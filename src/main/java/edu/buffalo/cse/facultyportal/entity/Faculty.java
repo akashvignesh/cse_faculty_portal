@@ -18,7 +18,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "faculty")
+@Table(name = "cfp_faculty")
 @Getter
 @Setter
 @NoArgsConstructor
