@@ -6,9 +6,11 @@ import edu.buffalo.cse.facultyportal.dto.FacultyLeaveSummaryItemDto;
 import edu.buffalo.cse.facultyportal.dto.FacultyListItemDto;
 import edu.buffalo.cse.facultyportal.dto.FacultyOfficeAddressDto;
 import edu.buffalo.cse.facultyportal.dto.FacultyStudentSummaryDto;
+import edu.buffalo.cse.facultyportal.dto.FacultyTeachingHistoryItemDto;
+import edu.buffalo.cse.facultyportal.dto.FacultyTeachingHistoryResponseDto;
+import edu.buffalo.cse.facultyportal.dto.FacultyTeachingHistoryYearDto;
 import edu.buffalo.cse.facultyportal.dto.FacultyTeachingPreferenceItemDto;
 import edu.buffalo.cse.facultyportal.dto.FacultyTeachingPreferencesResponseDto;
-import edu.buffalo.cse.facultyportal.dto.FacultyTeachingHistoryItemDto;
 import edu.buffalo.cse.facultyportal.dto.PaginatedResponseDto;
 import edu.buffalo.cse.facultyportal.dto.ProfilePhotoUpdateResponseDto;
 import edu.buffalo.cse.facultyportal.dto.SaveTeachingPreferenceRequestItemDto;
@@ -22,6 +24,7 @@ import edu.buffalo.cse.facultyportal.exception.InvalidFileException;
 import edu.buffalo.cse.facultyportal.exception.ResourceNotFoundException;
 import edu.buffalo.cse.facultyportal.mapper.FacultyMapper;
 import edu.buffalo.cse.facultyportal.repository.FacultyDetailRepository;
+import edu.buffalo.cse.facultyportal.repository.FacultyTeachingHistoryRepository;
 import edu.buffalo.cse.facultyportal.repository.FacultyTeachingPreferenceRepository;
 import edu.buffalo.cse.facultyportal.repository.DocumentRepository;
 import edu.buffalo.cse.facultyportal.repository.FacultyRepository;
@@ -40,11 +43,14 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.regex.Pattern;
 
 @Service
@@ -58,6 +64,7 @@ public class FacultyServiceImpl implements FacultyService {
     private static final String ACTION_SAVED = "SAVED";
     private static final String ACTION_UPDATED = "UPDATED";
     private static final String ACTION_DELETED = "DELETED";
+    private static final int TERM_SOURCE_KEY_LENGTH = 4;
     private static final Set<String> ALLOWED_IMAGE_TYPES = Set.of(
             "image/jpeg", "image/png", "image/webp");
     private static final Map<Integer, String> PREF_VALUE_TO_LABEL = Map.of(
@@ -72,10 +79,13 @@ public class FacultyServiceImpl implements FacultyService {
             "preference3", 3,
             "qualified", 0,
             "not qualified", -1);
+    private static final Comparator<FacultyTeachingHistoryItemDto> TEACHING_HISTORY_ITEM_COMPARATOR =
+            (left, right) -> compareClassNumbers(left.getClassNumber(), right.getClassNumber());
 
     private final FacultyRepository facultyRepository;
     private final FacultyDetailRepository facultyDetailRepository;
     private final FacultyTeachingPreferenceRepository facultyTeachingPreferenceRepository;
+    private final FacultyTeachingHistoryRepository facultyTeachingHistoryRepository;
     private final DocumentRepository documentRepository;
     private final FacultyMapper facultyMapper;
 
@@ -151,9 +161,9 @@ public class FacultyServiceImpl implements FacultyService {
                 .researchAreas(facultyDetailRepository.findResearchAreas(personNumber).stream()
                         .map(FacultyDetailRepository.ResearchAreaProjection::getAreaName)
                         .toList())
-                .teachingHistory(facultyDetailRepository.findTeachingHistory(personNumber).stream()
-                        .map(this::toTeachingHistoryItemDto)
-                        .toList())
+                .teachingReductions(facultyDetailRepository.findTeachingReductions(personNumber).stream()
+                    .map(this::toTeachingReductionItemDto)
+                    .toList())
                 .leaveSummary(facultyDetailRepository.findLeaveSummary(personNumber).stream()
                         .map(this::toLeaveSummaryItemDto)
                         .toList())
@@ -161,6 +171,63 @@ public class FacultyServiceImpl implements FacultyService {
                         facultyDetailRepository.findStudentsUnderProfessor(personNumber).stream()
                                 .map(this::toStudentSummaryDto)
                                 .toList())
+                .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public FacultyTeachingHistoryResponseDto getTeachingHistory(String facultySourceKey) {
+        validateFacultySourceKey(facultySourceKey);
+
+        List<FacultyTeachingHistoryRepository.TeachingHistoryProjection> rows =
+                facultyTeachingHistoryRepository.findTeachingHistory(facultySourceKey.trim());
+
+        String faculty = rows.stream()
+                .map(FacultyTeachingHistoryRepository.TeachingHistoryProjection::getFaculty)
+                .filter(value -> value != null && !value.isBlank())
+                .map(String::trim)
+                .findFirst()
+                .orElse(null);
+
+        NavigableMap<Integer, TeachingHistoryYearAccumulator> yearsByYear =
+                new TreeMap<>(Comparator.reverseOrder());
+
+        for (FacultyTeachingHistoryRepository.TeachingHistoryProjection row : rows) {
+            DecodedTerm decodedTerm = decodeTermSourceKey(row.getTermSourceKey());
+            if (decodedTerm == null) {
+                log.warn(
+                        "Skipping teaching history row for facultySourceKey={} due to unsupported termSourceKey={}",
+                        facultySourceKey,
+                        row.getTermSourceKey());
+                continue;
+            }
+
+            TeachingHistoryYearAccumulator yearAccumulator =
+                    yearsByYear.computeIfAbsent(
+                            decodedTerm.year(),
+                            ignored -> new TeachingHistoryYearAccumulator());
+
+            FacultyTeachingHistoryItemDto item = FacultyTeachingHistoryItemDto.builder()
+                    .classNumber(trimToNull(row.getClassNumber()))
+                    .courseName(buildTeachingHistoryCourseName(
+                            row.getPrimaryCatalogNumber(),
+                            row.getCourseTitleLong(),
+                            row.getCourseId()))
+                    .courseType(trimToNull(row.getCourseType()))
+                    .courseCareer(decodeCourseCareer(row.getCourseCareerSourceKey()))
+                    .build();
+
+            yearAccumulator.add(decodedTerm.term(), item);
+        }
+
+        List<FacultyTeachingHistoryYearDto> years = yearsByYear.entrySet().stream()
+                .map(entry -> entry.getValue().toDto(entry.getKey()))
+                .toList();
+
+        return FacultyTeachingHistoryResponseDto.builder()
+                .faculty(faculty)
+                .facultySourceKey(facultySourceKey.trim())
+                .years(years)
                 .build();
     }
 
@@ -316,6 +383,12 @@ public class FacultyServiceImpl implements FacultyService {
         }
     }
 
+    private void validateFacultySourceKey(String facultySourceKey) {
+        if (facultySourceKey == null || facultySourceKey.isBlank()) {
+            throw new IllegalArgumentException("facultySourceKey is required");
+        }
+    }
+
     private void validateSaveTeachingPreferencesRequest(
             String facultyId,
             SaveTeachingPreferencesRequestDto request) {
@@ -436,6 +509,26 @@ public class FacultyServiceImpl implements FacultyService {
         return primaryCatalogNumber.trim() + "-" + courseTitleLong.trim();
     }
 
+    private String buildTeachingHistoryCourseName(
+            String primaryCatalogNumber,
+            String courseTitleLong,
+            String courseId) {
+        String catalogNumber = trimToNull(primaryCatalogNumber);
+        String title = trimToNull(courseTitleLong);
+        String normalizedCourseId = trimToNull(courseId);
+
+        if (catalogNumber != null && title != null) {
+            return catalogNumber + "-" + title;
+        }
+        if (catalogNumber != null) {
+            return catalogNumber;
+        }
+        if (title != null) {
+            return title;
+        }
+        return normalizedCourseId;
+    }
+
     private String normalizeCourseName(String courseName) {
         if (courseName == null || courseName.isBlank()) {
             throw new IllegalArgumentException("courseName is required");
@@ -490,11 +583,126 @@ public class FacultyServiceImpl implements FacultyService {
         return coursePref;
     }
 
+    private DecodedTerm decodeTermSourceKey(String termSourceKey) {
+        String normalized = trimToNull(termSourceKey);
+        if (normalized == null || normalized.length() < TERM_SOURCE_KEY_LENGTH) {
+            return null;
+        }
+
+        char centuryChar = normalized.charAt(0);
+        String yearDigits = normalized.substring(1, 3);
+        char termChar = normalized.charAt(3);
+
+        if (!Character.isDigit(centuryChar)
+                || !Character.isDigit(yearDigits.charAt(0))
+                || !Character.isDigit(yearDigits.charAt(1))
+                || !Character.isDigit(termChar)) {
+            return null;
+        }
+
+        int centuryDigit = Character.getNumericValue(centuryChar);
+        int yearWithinCentury = Integer.parseInt(yearDigits);
+        int fullYear = ((centuryDigit + 18) * 100) + yearWithinCentury;
+
+        TermBucket term = switch (termChar) {
+            case '1' -> TermBucket.SPRING;
+            case '6' -> TermBucket.SUMMER;
+            case '9' -> TermBucket.FALL;
+            default -> null;
+        };
+
+        return term != null ? new DecodedTerm(fullYear, term) : null;
+    }
+
+    private String decodeCourseCareer(String courseCareerSourceKey) {
+        String normalized = trimToNull(courseCareerSourceKey);
+        if (normalized == null) {
+            return null;
+        }
+
+        return switch (normalized.toUpperCase(Locale.ROOT)) {
+            case "UGRD" -> "Undergraduate";
+            case "GRAD" -> "Graduate";
+            default -> normalized;
+        };
+    }
+
+    private static int compareClassNumbers(String left, String right) {
+        String normalizedLeft = trimToNullStatic(left);
+        String normalizedRight = trimToNullStatic(right);
+
+        if (normalizedLeft == null && normalizedRight == null) {
+            return 0;
+        }
+        if (normalizedLeft == null) {
+            return 1;
+        }
+        if (normalizedRight == null) {
+            return -1;
+        }
+
+        boolean leftNumeric = normalizedLeft.chars().allMatch(Character::isDigit);
+        boolean rightNumeric = normalizedRight.chars().allMatch(Character::isDigit);
+        if (leftNumeric && rightNumeric) {
+            return Integer.compare(Integer.parseInt(normalizedLeft), Integer.parseInt(normalizedRight));
+        }
+
+        return String.CASE_INSENSITIVE_ORDER.compare(normalizedLeft, normalizedRight);
+    }
+
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
     }
 
+    private String trimToNull(String value) {
+        return trimToNullStatic(value);
+    }
+
+    private static String trimToNullStatic(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
     private record CourseNameParts(String primaryCatalogNumber, String courseTitleLong) {
+    }
+
+    private record DecodedTerm(int year, TermBucket term) {
+    }
+
+    private enum TermBucket {
+        SPRING,
+        SUMMER,
+        FALL
+    }
+
+    private static final class TeachingHistoryYearAccumulator {
+        private final List<FacultyTeachingHistoryItemDto> spring = new ArrayList<>();
+        private final List<FacultyTeachingHistoryItemDto> summer = new ArrayList<>();
+        private final List<FacultyTeachingHistoryItemDto> fall = new ArrayList<>();
+
+        private void add(TermBucket termBucket, FacultyTeachingHistoryItemDto item) {
+            switch (termBucket) {
+                case SPRING -> spring.add(item);
+                case SUMMER -> summer.add(item);
+                case FALL -> fall.add(item);
+            }
+        }
+
+        private FacultyTeachingHistoryYearDto toDto(int year) {
+            spring.sort(TEACHING_HISTORY_ITEM_COMPARATOR);
+            summer.sort(TEACHING_HISTORY_ITEM_COMPARATOR);
+            fall.sort(TEACHING_HISTORY_ITEM_COMPARATOR);
+
+            return FacultyTeachingHistoryYearDto.builder()
+                    .year(year)
+                    .spring(List.copyOf(spring))
+                    .summer(List.copyOf(summer))
+                    .fall(List.copyOf(fall))
+                    .build();
+        }
     }
 
     private FacultyOfficeAddressDto toOfficeAddressDto(
@@ -542,21 +750,6 @@ public class FacultyServiceImpl implements FacultyService {
         return null;
     }
 
-    private FacultyTeachingHistoryItemDto toTeachingHistoryItemDto(
-            FacultyDetailRepository.TeachingHistoryProjection projection) {
-        return FacultyTeachingHistoryItemDto.builder()
-                .termCode(projection.getTermCode())
-                .courseCode(projection.getCourseCode())
-                .courseName(projection.getCourseName())
-                .sectionCode(projection.getSectionCode())
-                .role(projection.getRoleName())
-                .days(projection.getDays())
-                .timeRange(projection.getTimeRange())
-                .location(projection.getLocation())
-                .enrollment(projection.getEnrollment())
-                .build();
-    }
-
     private FacultyLeaveSummaryItemDto toLeaveSummaryItemDto(
             FacultyDetailRepository.LeaveSummaryProjection projection) {
         return FacultyLeaveSummaryItemDto.builder()
@@ -566,6 +759,18 @@ public class FacultyServiceImpl implements FacultyService {
                 .location(projection.getLocation())
                 .reason(projection.getReason())
                 .backupFacultyPersonNumber(projection.getBackupFacultyPersonNumber())
+                .build();
+    }
+
+    private FacultyDetailDto.TeachingReductionDto toTeachingReductionItemDto(
+            FacultyDetailRepository.TeachingReductionProjection projection) {
+        return FacultyDetailDto.TeachingReductionDto.builder()
+                .termCode(projection.getTermCode())
+                .reductionType(projection.getReductionType())
+                .reductionAmount(projection.getReductionAmount())
+                .reason(projection.getReason())
+                .approvalDocumentId(projection.getApprovalDocumentId())
+                .createdAt(projection.getCreatedAt() != null ? projection.getCreatedAt().toLocalDate() : null)
                 .build();
     }
 

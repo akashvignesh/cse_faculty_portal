@@ -3,6 +3,7 @@ package edu.buffalo.cse.facultyportal.controller;
 import edu.buffalo.cse.facultyportal.dto.ApiResponseDto;
 import edu.buffalo.cse.facultyportal.dto.FacultyDetailDto;
 import edu.buffalo.cse.facultyportal.dto.FacultyListItemDto;
+import edu.buffalo.cse.facultyportal.dto.FacultyTeachingHistoryResponseDto;
 import edu.buffalo.cse.facultyportal.dto.FacultyTeachingPreferencesResponseDto;
 import edu.buffalo.cse.facultyportal.dto.PaginatedResponseDto;
 import edu.buffalo.cse.facultyportal.dto.ProfilePhotoUpdateResponseDto;
@@ -55,6 +56,19 @@ public class FacultyController {
         FacultyDetailDto result = facultyService.getFacultyDetails(personNumber);
         return ResponseEntity.ok(
                 ApiResponseDto.success("Faculty details fetched successfully", result));
+    }
+
+    /**
+     * GET /api/v1/faculty/{facultySourceKey}/teaching-history
+     */
+    @GetMapping("/{facultySourceKey}/teaching-history")
+    public ResponseEntity<ApiResponseDto<FacultyTeachingHistoryResponseDto>> getTeachingHistory(
+            @PathVariable String facultySourceKey) {
+
+        FacultyTeachingHistoryResponseDto result =
+                facultyService.getTeachingHistory(facultySourceKey);
+        return ResponseEntity.ok(
+                ApiResponseDto.success("Teaching history fetched successfully", result));
     }
 
     /**

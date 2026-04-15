@@ -7,16 +7,21 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
+
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
 @JsonInclude(JsonInclude.Include.ALWAYS)
-public class FacultyTeachingHistoryItemDto {
+public class FacultyTeachingReductionItemDto {
 
-    private String classNumber;
-    private String courseName;
-    private String courseType;
-    private String courseCareer;
+    private String termCode;
+    private String reductionType;
+    private BigDecimal reductionAmount;
+    private String reason;
+    private Long approvalDocumentId;
+    private LocalDate createdAt;
 }

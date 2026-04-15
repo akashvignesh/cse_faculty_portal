@@ -6,6 +6,8 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -66,35 +68,28 @@ public interface FacultyDetailRepository
             @Param("personNumber") String personNumber);
 
     @Query(value = """
-            SELECT ra.area_name AS areaName
-            FROM cfp_research_areas ra
-            WHERE ra.faculty_person_number = :personNumber
-            ORDER BY ra.research_area_id ASC
+            SELECT ram.area_name AS areaName
+            FROM cfp_faculty_research_areas fra
+            JOIN cfp_research_area_master ram
+              ON ram.research_area_id = fra.research_area_id
+            WHERE fra.faculty_person_number = :personNumber
+            ORDER BY fra.faculty_research_area_id ASC
             """, nativeQuery = true)
     List<ResearchAreaProjection> findResearchAreas(@Param("personNumber") String personNumber);
 
     @Query(value = """
-            SELECT co.term_code AS termCode,
-                   c.course_code AS courseCode,
-                   c.course_name AS courseName,
-                   co.section_code AS sectionCode,
-                   ta.role_name AS roleName,
-                   co.days AS days,
-                   co.time_range AS timeRange,
-                   co.location AS location,
-                   co.enrollment AS enrollment
-                                                FROM cfp_teaching_assignments ta
-                                                JOIN cfp_course_offerings co
-              ON co.offering_id = ta.offering_id
-                                                JOIN cfp_courses c
-              ON c.course_id = co.course_id
-            WHERE ta.faculty_person_number = :personNumber
-            ORDER BY co.term_code DESC,
-                     c.course_code ASC,
-                     co.section_code ASC,
-                     ta.teaching_assignment_id ASC
+            SELECT tr.term_code AS termCode,
+                   tr.reduction_type AS reductionType,
+                   tr.reduction_amount AS reductionAmount,
+                   tr.reason AS reason,
+                   tr.approval_document_id AS approvalDocumentId,
+                   tr.created_at AS createdAt
+            FROM cfp_teaching_reductions tr
+            WHERE tr.faculty_person_number = :personNumber
+            ORDER BY tr.term_code DESC,
+                     tr.teaching_reduction_id DESC
             """, nativeQuery = true)
-    List<TeachingHistoryProjection> findTeachingHistory(
+    List<TeachingReductionProjection> findTeachingReductions(
             @Param("personNumber") String personNumber);
 
     @Query(value = """
@@ -153,25 +148,19 @@ public interface FacultyDetailRepository
         String getAreaName();
     }
 
-    interface TeachingHistoryProjection {
-        String getTermCode();
+        interface TeachingReductionProjection {
+                String getTermCode();
 
-        String getCourseCode();
+                String getReductionType();
 
-        String getCourseName();
+                BigDecimal getReductionAmount();
 
-        String getSectionCode();
+                String getReason();
 
-        String getRoleName();
+                Long getApprovalDocumentId();
 
-        String getDays();
-
-        String getTimeRange();
-
-        String getLocation();
-
-        Integer getEnrollment();
-    }
+                LocalDateTime getCreatedAt();
+        }
 
     interface LeaveSummaryProjection {
         String getLeaveType();

@@ -7,6 +7,7 @@ import edu.buffalo.cse.facultyportal.dto.SaveTeachingPreferencesResponseDto;
 import edu.buffalo.cse.facultyportal.repository.DocumentRepository;
 import edu.buffalo.cse.facultyportal.repository.FacultyDetailRepository;
 import edu.buffalo.cse.facultyportal.repository.FacultyRepository;
+import edu.buffalo.cse.facultyportal.repository.FacultyTeachingHistoryRepository;
 import edu.buffalo.cse.facultyportal.repository.FacultyTeachingPreferenceRepository;
 import edu.buffalo.cse.facultyportal.mapper.FacultyMapper;
 import org.junit.jupiter.api.Test;
@@ -35,6 +36,9 @@ class FacultyServiceImplTest {
 
     @Mock
     private FacultyTeachingPreferenceRepository facultyTeachingPreferenceRepository;
+
+    @Mock
+    private FacultyTeachingHistoryRepository facultyTeachingHistoryRepository;
 
     @Mock
     private DocumentRepository documentRepository;
@@ -154,11 +158,118 @@ class FacultyServiceImplTest {
         assertEquals("Invalid coursePref: preferred", exception.getMessage());
     }
 
+    @Test
+    void getTeachingHistoryGroupsRowsByYearAndTermAndSortsCourses() {
+        when(facultyTeachingHistoryRepository.findTeachingHistory("10000001"))
+                .thenReturn(List.of(
+                        historyRow("Jane Doe", "10000001", "30500", "2259", "Lecture", "UGRD",
+                                "C1", "CSE 331", "Algorithms"),
+                        historyRow("Jane Doe", "10000001", "104", "2251", "Seminar", "GRAD",
+                                "C2", "CSE 601", "Advanced Topics"),
+                        historyRow("Jane Doe", "10000001", "102", "2251", "Lecture", "UGRD",
+                                "C3", "CSE 521", "Operating Systems"),
+                        historyRow("Jane Doe", "10000001", "205", "2246", "Lecture", "PHD",
+                                "C4", "CSE 701", "Research Methods")));
+
+        var response = facultyService.getTeachingHistory("10000001");
+
+        assertEquals("Jane Doe", response.getFaculty());
+        assertEquals("10000001", response.getFacultySourceKey());
+        assertEquals(2, response.getYears().size());
+        assertEquals(2025, response.getYears().get(0).getYear());
+        assertEquals(2024, response.getYears().get(1).getYear());
+
+        assertEquals(2, response.getYears().get(0).getSpring().size());
+        assertEquals("102", response.getYears().get(0).getSpring().get(0).getClassNumber());
+        assertEquals("CSE 521-Operating Systems",
+                response.getYears().get(0).getSpring().get(0).getCourseName());
+        assertEquals("Undergraduate",
+                response.getYears().get(0).getSpring().get(0).getCourseCareer());
+        assertEquals("104", response.getYears().get(0).getSpring().get(1).getClassNumber());
+        assertEquals("Graduate",
+                response.getYears().get(0).getSpring().get(1).getCourseCareer());
+
+        assertEquals(0, response.getYears().get(0).getSummer().size());
+        assertEquals(1, response.getYears().get(0).getFall().size());
+        assertEquals("30500", response.getYears().get(0).getFall().get(0).getClassNumber());
+
+        assertEquals(1, response.getYears().get(1).getSummer().size());
+        assertEquals("PHD", response.getYears().get(1).getSummer().get(0).getCourseCareer());
+    }
+
     private static SaveTeachingPreferenceRequestItemDto preference(String courseName, String coursePref) {
         return SaveTeachingPreferenceRequestItemDto.builder()
                 .courseName(courseName)
                 .coursePref(coursePref)
                 .build();
+    }
+
+    private static FacultyTeachingHistoryRepository.TeachingHistoryProjection historyRow(
+            String faculty,
+            String facultySourceKey,
+            String classNumber,
+            String termSourceKey,
+            String courseType,
+            String courseCareerSourceKey,
+            String courseId,
+            String primaryCatalogNumber,
+            String courseTitleLong) {
+        return new FacultyTeachingHistoryRepository.TeachingHistoryProjection() {
+            @Override
+            public String getFaculty() {
+                return faculty;
+            }
+
+            @Override
+            public String getFacultySourceKey() {
+                return facultySourceKey;
+            }
+
+            @Override
+            public String getClassNumber() {
+                return classNumber;
+            }
+
+            @Override
+            public String getTermSourceKey() {
+                return termSourceKey;
+            }
+
+            @Override
+            public String getCourseType() {
+                return courseType;
+            }
+
+            @Override
+            public String getCourseCareerSourceKey() {
+                return courseCareerSourceKey;
+            }
+
+            @Override
+            public String getCourseId() {
+                return courseId;
+            }
+
+            @Override
+            public String getPrimaryCatalogNumber() {
+                return primaryCatalogNumber;
+            }
+
+            @Override
+            public String getCourseTitleLong() {
+                return courseTitleLong;
+            }
+
+            @Override
+            public String getEffectiveStatus() {
+                return "A";
+            }
+
+            @Override
+            public java.time.LocalDate getEffectiveDate() {
+                return java.time.LocalDate.of(2025, 1, 1);
+            }
+        };
     }
 
     private static FacultyTeachingPreferenceRepository.CourseCatalogProjection course(
