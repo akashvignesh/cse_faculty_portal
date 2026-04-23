@@ -16,12 +16,12 @@ public interface FacultyDetailRepository
         extends org.springframework.data.repository.Repository<Faculty, String> {
 
     @Query(value = """
-            SELECT a.title AS title,
-                   a.rank_name AS rankName
+            SELECT a.official_job_title AS title,
+                   a.appointment_type AS rankName
             FROM cfp_appointments a
             WHERE a.faculty_person_number = :personNumber
-            ORDER BY CASE WHEN a.end_date IS NULL THEN 0 ELSE 1 END ASC,
-                     a.start_date DESC,
+            ORDER BY CASE WHEN a.appointment_end_date IS NULL THEN 0 ELSE 1 END ASC,
+                     a.appointment_effective_date DESC,
                      a.appointment_id DESC
             LIMIT 1
             """, nativeQuery = true)
